@@ -50,7 +50,13 @@ async function startWhatsAppBot() {
           chat.message?.conversation
         )?.toLowerCase() || "";
 
-      if (pesan === "!menu") {
+      if (pesan === "!help") {
+        await socket.sendMessage(chat.key.remoteJid, {
+          text: "Tampilkan Menu\n```    !menu```\n\nLacak Paket\n```    !track@kodetransaksi```",
+        });
+      } else if (pesan.startsWith("!track")) {
+        console.log("track");
+      } else if (pesan === "!menu") {
         if (productData.length > 0) {
           const productNames = productData
             .map(
@@ -170,7 +176,7 @@ async function startWhatsAppBot() {
               });
             } else {
               await socket.sendMessage(chat.key.remoteJid, {
-                text: `Menu ${productName} tidak ditemukan.`,
+                text: `Perintah ${productName} tidak ditemukan.`,
               });
             }
           }
