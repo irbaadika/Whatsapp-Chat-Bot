@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "axios": "^1.7.2",
+    "mysql": "^2.18.1",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
