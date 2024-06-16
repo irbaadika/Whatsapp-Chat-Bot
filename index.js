@@ -36,6 +36,13 @@ async function startWhatsAppBot() {
     socket.ev.on("messages.upsert", async ({ messages, type }) => {
       const chat = messages[0];
       const userId = chat.key.remoteJid;
+      const isGroup = userId.includes("@g.us");
+
+      // Ignore group messages
+      if (isGroup) {
+        return;
+      }
+
       const pesan =
         (
           chat.message?.extendedTextMessage?.text ??
@@ -51,14 +58,6 @@ async function startWhatsAppBot() {
         await socket.sendMessage(chat.key.remoteJid, {
           text: "*TUTORIAL MENGGUNAKAN BOT*\n\n> Ketikkan ! di awal untuk menjalankan perintah sesuai dengan yang disediakan\n\nTampilkan Menu\n```    !menu```\n\nLacak Paket\n```    !track@kodetransaksi```",
         });
-      } else if (pesan === "!cobalink") {
-        await socket.sendMessage(
-          chat.key.remoteJid,
-          {
-            text: "linknya adalah https://github.com/adiwajshing/baileys",
-          },
-          { disappearingMessagesInChat: 3 }
-        );
       } else if (pesan.startsWith("!track")) {
         const [, transactionCode] = pesan.split("@");
         if (!transactionCode) {
@@ -99,8 +98,6 @@ async function startWhatsAppBot() {
             default:
               break;
           }
-
-          // Kirim pesan dengan order_status ke pengguna melalui WhatsApp (atau media lainnya)
           await socket.sendMessage(chat.key.remoteJid, {
             text: `Status pesanan untuk kode transaksi ${transactionCode.toUpperCase()}\n\n${statusMessage}`,
           });
@@ -127,7 +124,8 @@ async function startWhatsAppBot() {
               text: `Penilaian produk gagal, pesanan yang anda cari tidak ditemukan!`,
             });
           } else {
-            const rateUrl = `http://local.web-whisper-update.test/rate/${transactionCode.toUpperCase()}`;
+            // const rateUrl = `http://local.web-whisper-update.test/rate/${transactionCode.toUpperCase()}`;
+            const rateUrl = `https://7da9-103-129-92-177.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
             await socket.sendMessage(chat.key.remoteJid, {
               text: `Silahkan klik tautan di bawah ini untuk melakukan penilaian pada produk yang anda pesan\n\n${rateUrl}`,
             });
@@ -149,14 +147,23 @@ async function startWhatsAppBot() {
         }
         if (productData.length > 0) {
           const productNames = productData
-            .map(
-              (product) =>
-                `${product.name} - Rp. ${
+            .map((product) => {
+              if (product.variant_name) {
+                return `${product.name} ${product.variant_name} - Rp. ${
                   product.price
                 }\n    \`\`\`!${product.name
                   .toLowerCase()
-                  .replace(/\s/g, "")}\`\`\``
-            )
+                  .replace(/\s/g, "")}${product.variant_name
+                  .toLowerCase()
+                  .replace(/\s/g, "")}\`\`\``;
+              } else {
+                return `${product.name} - Rp. ${
+                  product.price
+                }\n    \`\`\`!${product.name
+                  .toLowerCase()
+                  .replace(/\s/g, "")}\`\`\``;
+              }
+            })
             .join("\n\n");
           await socket.sendMessage(chat.key.remoteJid, {
             text: `\*MENU\*\n\n${productNames}\n\n\*Cara pesan\*\n> Pesan 1 menu :\n> \`\`\`    !bakso\`\`\`\n> Pesan 1 menu jumlah banyak :\n> \`\`\`    !bakso/2\`\`\`\n> Pesan beberapa menu :\n> \`\`\`    !bakso/2,!mie\`\`\``,
@@ -177,7 +184,7 @@ async function startWhatsAppBot() {
           const product = productData.find((p) => p.id === item.product_id);
           if (product) {
             const subtotal = product.price * item.quantity;
-            orderDetails += `${item.quantity} ${product.name} - Rp. ${subtotal}\n`;
+            orderDetails += `${item.quantity} ${product.name} ${product.variant_name} - Rp. ${subtotal}\n`;
             totalCost += subtotal;
           }
         }
@@ -187,7 +194,7 @@ async function startWhatsAppBot() {
         });
       } else if (pesan === "!yakin") {
         await socket.sendMessage(chat.key.remoteJid, {
-          text: `Jika anda yakin dengan pesanan anda maka ketikkan\n\`\`\` !pesan@nama@alamat\`\`\`\n\nContoh\n> !pesan@RijalAmmar@Jalan PDAM`,
+          text: `Jika anda yakin dengan pesanan anda maka ketikkan\n\`\`\` !pesan@nama@alamat\`\`\`\n\nContoh\n> !pesan@Irba@Jalan Mawar No.1`,
         });
       } else if (pesan.startsWith("!pesan")) {
         const [, name, address] = pesan.split("@");
@@ -230,7 +237,7 @@ async function startWhatsAppBot() {
             paymentLock[transactionCode] = true;
 
             const payment = {
-              transaction_id: transactionCode,
+              transaction_id: transactionCode.toUpperCase(),
             };
             try {
               const response = await axios.post(
@@ -286,7 +293,7 @@ async function startWhatsAppBot() {
         paymentLock[transaction_id] = true;
         try {
           const payment = {
-            transaction_id: transaction_id,
+            transaction_id: transaction_id.toUpperCase(),
           };
           const response = await axios.post(
             "http://local.web-whisper-update.test/api/customer/transaction/payment",
@@ -316,10 +323,23 @@ async function startWhatsAppBot() {
             const productName = match[1];
             const quantity = match[2] ? parseInt(match[2], 10) : 1;
             if (quantity > 0) {
-              const product = productData.find(
-                (product) =>
-                  product.name.toLowerCase().replace(/\s/g, "") === productName
-              );
+              const product = productData.find((product) => {
+                const formattedProductName = product.name
+                  .toLowerCase()
+                  .replace(/\s/g, "");
+                if (product.variant_name) {
+                  const formattedVariantName = product.variant_name
+                    .toLowerCase()
+                    .replace(/\s/g, "");
+                  // Produk dengan variant_name harus diakses dengan nama + variant_name
+                  return (
+                    formattedProductName + formattedVariantName === productName
+                  );
+                } else {
+                  // Produk tanpa variant_name bisa diakses hanya dengan nama
+                  return formattedProductName === productName;
+                }
+              });
 
               if (product) {
                 const existingItemIndex = carts[userId].findIndex(
@@ -351,7 +371,7 @@ async function startWhatsAppBot() {
             const product = productData.find((p) => p.id === item.product_id);
             if (product) {
               const subtotal = product.price * item.quantity;
-              orderDetails += `${item.quantity} ${product.name} - Rp. ${subtotal}\n`;
+              orderDetails += `${item.quantity} ${product.name} ${product.variant_name} - Rp. ${subtotal}\n`;
               totalCost += subtotal;
             }
           }
