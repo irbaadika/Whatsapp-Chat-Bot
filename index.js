@@ -28,6 +28,7 @@ async function startWhatsAppBot() {
     let productData = [];
     const user = socket.user;
     const phoneNumber = user.id.split(":")[0];
+    const baseUrl = "http://local.web-whisper-update.test";
     const endpoint = `http://local.web-whisper-update.test/api/${phoneNumber}/products`;
 
     const carts = {};
@@ -36,29 +37,75 @@ async function startWhatsAppBot() {
     socket.ev.on("messages.upsert", async ({ messages, type }) => {
       const chat = messages[0];
       const userId = chat.key.remoteJid;
-      const isGroup = userId.includes("@g.us");
 
-      // Ignore group messages
+      // Batasi chat group
+      const isGroup = userId.includes("@g.us");
       if (isGroup) {
         return;
       }
 
       const pesan =
-        (
-          chat.message?.extendedTextMessage?.text ??
-          chat.message?.ephemeralMessage?.message?.extendedTextMessage?.text ??
-          chat.message?.conversation
-        )?.toLowerCase() || "";
+        chat.message?.extendedTextMessage?.text ??
+        chat.message?.ephemeralMessage?.message?.extendedTextMessage?.text ??
+        chat.message?.conversation;
 
+      // Batasi cart per user id
       if (!carts[userId]) {
         carts[userId] = [];
       }
 
-      if (pesan === "!help") {
+      // BAYAR JIKA PESAN MELALUI WEBSITE
+      if (pesan.startsWith("Hi, Admin")) {
+        const transactionCodeMatch = pesan.match(/TRX-P\d{14}/);
+        const customerNameMatch = pesan.match(/Customer Name: ([^\n]+)/);
+
+        if (transactionCodeMatch && customerNameMatch) {
+          const transactionCode = transactionCodeMatch[0];
+          const customerName = customerNameMatch[1];
+
+          await socket.sendMessage(chat.key.remoteJid, {
+            text: `Hi, ${customerName}, Pesanan kamu dengan kode ${transactionCode} berhasil dibuat`,
+          });
+
+          paymentLock[transactionCode] = true;
+
+          const payment = {
+            transaction_id: transactionCode.toUpperCase(),
+          };
+
+          try {
+            const response = await axios.post(
+              `${baseUrl}/api/customer/transaction/payment`,
+              payment
+            );
+            const snapToken = response.data.payment_url;
+            // Mengirim pesan ketiga
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: `Silahkan lakukan pembayaran dengan menekan tautan berikut ini:\n${snapToken}`,
+            });
+          } catch (error) {
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: `Gagal mendapatkan kode pembayaran, silahkan lakukan kembali dengan mengetikkan\n\`\`\`!bayar@t\`\`\`\n> !bayar@TRX-2000000000`,
+            });
+            console.log(error.response.data);
+          } finally {
+            // Release the lock for this transaction_id
+            delete paymentLock[transactionCode];
+          }
+        } else {
+          await socket.sendMessage(chat.key.remoteJid, {
+            text: "Maaf, nomor transaksi atau nama pelanggan tidak ditemukan.",
+          });
+        }
+      }
+      // HELP
+      else if (pesan === "!help") {
         await socket.sendMessage(chat.key.remoteJid, {
-          text: "*TUTORIAL MENGGUNAKAN BOT*\n\n> Ketikkan ! di awal untuk menjalankan perintah sesuai dengan yang disediakan\n\nTampilkan Menu\n```    !menu```\n\nLacak Paket\n```    !track@kodetransaksi```",
+          text: "*TUTORIAL MENGGUNAKAN BOT*\n\n> Ketikkan ! di awal untuk menjalankan perintah sesuai dengan yang disediakan\n\nTampilkan Menu\n```    !menu```\n\nKosongkan Keranjang\n```    !kosongkankeranjang```\n\nLacak Paket\n```    !track@kodetransaksi```",
         });
-      } else if (pesan.startsWith("!track")) {
+      }
+      // LACAK PESANAN
+      else if (pesan.startsWith("!track")) {
         const [, transactionCode] = pesan.split("@");
         if (!transactionCode) {
           await socket.sendMessage(chat.key.remoteJid, {
@@ -68,7 +115,7 @@ async function startWhatsAppBot() {
         }
         try {
           const response = await axios.get(
-            `http://local.web-whisper-update.test/api/track/${transactionCode}`
+            `${baseUrl}/api/track/${transactionCode}`
           );
           const { order, transactionNow } = response.data;
           const orderStatus = order.order_status;
@@ -93,7 +140,7 @@ async function startWhatsAppBot() {
               statusMessage = `> Sedang dikirim\n\nInformasi Pengirim\nPengirim: ${sender.name}\nNo HP: 0${sender.phone_number}`;
               break;
             case "Fullfilled":
-              statusMessage = `> Sudah Diterima\n\nInformasi Penerima\nPenerima: ${customer.name}\nAlamat: ${customer.address}\npada ${updatedAt}`;
+              statusMessage = `> Sudah Diterima\n\nInformasi Penerima\nPenerima: ${customer.name}\nAlamat: ${customer.address}\npada ${updatedAt}\n\nAnda bisa melakukan rating produk kami dengan\n\`\`\`    !rate@kodetransaksi\`\`\``;
               break;
             default:
               break;
@@ -106,7 +153,9 @@ async function startWhatsAppBot() {
             text: "Terjadi kesalahan saat melakukan pelacakan. Silakan coba lagi nanti.",
           });
         }
-      } else if (pesan.startsWith("!rate")) {
+      }
+      // RATING PESANAN
+      else if (pesan.startsWith("!rate")) {
         const [, transactionCode] = pesan.split("@");
         if (!transactionCode) {
           await socket.sendMessage(chat.key.remoteJid, {
@@ -116,7 +165,7 @@ async function startWhatsAppBot() {
         }
         try {
           const response = await axios.get(
-            `http://local.web-whisper-update.test/api/track/${transactionCode}`
+            `${baseUrl}/api/track/${transactionCode}`
           );
           const { order } = response.data;
           if (order.order_status !== "Fullfilled") {
@@ -124,60 +173,88 @@ async function startWhatsAppBot() {
               text: `Penilaian produk gagal, pesanan yang anda cari tidak ditemukan!`,
             });
           } else {
-            // const rateUrl = `http://local.web-whisper-update.test/rate/${transactionCode.toUpperCase()}`;
-            const rateUrl = `https://7da9-103-129-92-177.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
+            // const rateUrl = `${baseUrl}/rate/${transactionCode.toUpperCase()}`;
+            const rateUrl = `https://38db-182-4-134-129.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
             await socket.sendMessage(chat.key.remoteJid, {
               text: `Silahkan klik tautan di bawah ini untuk melakukan penilaian pada produk yang anda pesan\n\n${rateUrl}`,
             });
           }
         } catch (error) {
           await socket.sendMessage(chat.key.remoteJid, {
-            text: "Terjadi kesalahan. Silakan coba lagi nanti.",
+            text: "Format yang anda masukkan salah!",
           });
         }
-      } else if (pesan === "!menu") {
+      }
+      // TAMPILKAN MENU
+      else if (pesan === "!menu") {
         try {
-          const response = await axios.get(endpoint);
+          const response = await axios.get(
+            `${baseUrl}/api/${phoneNumber}/products`
+          );
           productData = response.data.products;
+
+          if (productData.length > 0) {
+            // Group produk berdasarkan kategori
+            const groupedProducts = {};
+            productData.forEach((product) => {
+              if (!groupedProducts[product.category]) {
+                groupedProducts[product.category] = [];
+              }
+              groupedProducts[product.category].push(product);
+            });
+
+            let productNames = "";
+            // Tampilkan menu berdasarkan kategori
+            Object.keys(groupedProducts).forEach((category) => {
+              productNames += `MENU ${category.toUpperCase()}\n\n`;
+              productNames += groupedProducts[category]
+                .map((product) => {
+                  if (product.variant_name) {
+                    return `${product.name} ${product.variant_name} - Rp. ${
+                      product.price
+                    }\n    \`\`\`!${product.name
+                      .toLowerCase()
+                      .replace(/\s/g, "")}${product.variant_name
+                      .toLowerCase()
+                      .replace(/\s/g, "")}\`\`\``;
+                  } else {
+                    return `${product.name} - Rp. ${
+                      product.price
+                    }\n    \`\`\`!${product.name
+                      .toLowerCase()
+                      .replace(/\s/g, "")}\`\`\``;
+                  }
+                })
+                .join("\n\n");
+              productNames += "\n\n";
+            });
+
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: `\*MENU\*\n\n${productNames}\n\n\*Cara pesan\*\n> Pesan 1 menu :\n> \`\`\`    !bakso\`\`\`\n> Pesan 1 menu jumlah banyak :\n> \`\`\`    !bakso/2\`\`\`\n> Pesan beberapa menu :\n> \`\`\`    !bakso/2,!mie\`\`\``,
+            });
+          } else {
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: "Failed to fetch product data.",
+            });
+          }
         } catch (error) {
           console.error(
             "Error fetching data from Laravel endpoint:",
             error.response
           );
-        }
-        if (productData.length > 0) {
-          const productNames = productData
-            .map((product) => {
-              if (product.variant_name) {
-                return `${product.name} ${product.variant_name} - Rp. ${
-                  product.price
-                }\n    \`\`\`!${product.name
-                  .toLowerCase()
-                  .replace(/\s/g, "")}${product.variant_name
-                  .toLowerCase()
-                  .replace(/\s/g, "")}\`\`\``;
-              } else {
-                return `${product.name} - Rp. ${
-                  product.price
-                }\n    \`\`\`!${product.name
-                  .toLowerCase()
-                  .replace(/\s/g, "")}\`\`\``;
-              }
-            })
-            .join("\n\n");
           await socket.sendMessage(chat.key.remoteJid, {
-            text: `\*MENU\*\n\n${productNames}\n\n\*Cara pesan\*\n> Pesan 1 menu :\n> \`\`\`    !bakso\`\`\`\n> Pesan 1 menu jumlah banyak :\n> \`\`\`    !bakso/2\`\`\`\n> Pesan beberapa menu :\n> \`\`\`    !bakso/2,!mie\`\`\``,
-          });
-        } else {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Failed to fetch product data.",
+            text: "Failed to fetch product data. Please try again later.",
           });
         }
-      } else if (pesan === "!pesanlagi") {
+      }
+      // PESAN MENU LAGI
+      else if (pesan === "!pesanlagi") {
         await socket.sendMessage(chat.key.remoteJid, {
           text: "Silakan pilih menu dan jumlah pesanan lagi.",
         });
-      } else if (pesan === "!checkout") {
+      }
+      // CHECKOUT
+      else if (pesan === "!checkout") {
         let orderDetails = "Pesanan Anda:\n";
         let totalCost = 0;
         for (const item of carts[userId]) {
@@ -192,11 +269,15 @@ async function startWhatsAppBot() {
         await socket.sendMessage(chat.key.remoteJid, {
           text: orderDetails,
         });
-      } else if (pesan === "!yakin") {
+      }
+      // CHECKOUT #2
+      else if (pesan === "!yakin") {
         await socket.sendMessage(chat.key.remoteJid, {
           text: `Jika anda yakin dengan pesanan anda maka ketikkan\n\`\`\` !pesan@nama@alamat\`\`\`\n\nContoh\n> !pesan@Irba@Jalan Mawar No.1`,
         });
-      } else if (pesan.startsWith("!pesan")) {
+      }
+      // BAYAR JIKA PESAN MELALUI CHAT
+      else if (pesan.startsWith("!pesan")) {
         const [, name, address] = pesan.split("@");
         const customerPhoneNumber = chat.key.remoteJid.split("@")[0];
         if (!name || !address) {
@@ -219,21 +300,19 @@ async function startWhatsAppBot() {
           };
           try {
             const response = await axios.post(
-              "http://local.web-whisper-update.test/api/customer/transaction",
+              `${baseUrl}/api/customer/transaction`,
               order
             );
             const transactionCode = response.data.result.code;
-            // Mengirim pesan pertama
             await socket.sendMessage(chat.key.remoteJid, {
               text: `Pesanan Anda berhasil dibuat dengan kode:`,
             });
-
-            // Mengirim pesan kedua
             await socket.sendMessage(chat.key.remoteJid, {
               text: `${transactionCode}`,
             });
-            carts[userId] = []; // Clear the cart for this user
+            carts[userId] = [];
 
+            // payment midtrans
             paymentLock[transactionCode] = true;
 
             const payment = {
@@ -241,21 +320,17 @@ async function startWhatsAppBot() {
             };
             try {
               const response = await axios.post(
-                "http://local.web-whisper-update.test/api/customer/transaction/payment",
+                `${baseUrl}/api/customer/transaction/payment`,
                 payment
               );
               const snapToken = response.data.payment_url;
               // Mengirim pesan ketiga
-              await socket.sendMessage(
-                chat.key.remoteJid,
-                {
-                  text: `Silahkan lakukan pembayaran dengan menekan tautan berikut ini:\n${snapToken}`,
-                },
-                { disappearingMessagesInChat: 5 }
-              );
+              await socket.sendMessage(chat.key.remoteJid, {
+                text: `Silahkan lakukan pembayaran dengan menekan tautan berikut ini:\n${snapToken}`,
+              });
             } catch (error) {
               await socket.sendMessage(chat.key.remoteJid, {
-                text: `Gagal mendapatkan kode pembayaran, silahkan lakukan kembali dengan mengetikkan\n\`\`\`!bayar@kodetransaksi\`\`\`\n> !bayar@TRX-2000000000`,
+                text: `Gagal mendapatkan kode pembayaran, silahkan lakukan kembali dengan mengetikkan\n\`\`\`!bayar@t\`\`\`\n> !bayar@TRX-2000000000`,
               });
               console.log(error.response.data);
             } finally {
@@ -269,12 +344,16 @@ async function startWhatsAppBot() {
             });
           }
         }
-      } else if (pesan === "!kosongkancart") {
+      }
+      // KOSONGKAN KERANJANG
+      else if (pesan === "!kosongkankeranjang") {
         carts[userId] = []; // Clear the cart for this user
         await socket.sendMessage(chat.key.remoteJid, {
-          text: `Keranjang anda telah dikosongkan`,
+          text: `Keranjang anda berhasil dikosongkan`,
         });
-      } else if (pesan.startsWith("!bayar")) {
+      }
+      // BAYAR MELALUI KODE TRANSAKSI
+      else if (pesan.startsWith("!bayar")) {
         const [, transaction_id] = pesan.split("@");
         if (!transaction_id) {
           await socket.sendMessage(chat.key.remoteJid, {
@@ -289,14 +368,14 @@ async function startWhatsAppBot() {
           return;
         }
 
-        // Set paymentLock to true to indicate this transaction is being processed
+        // payment midtrans
         paymentLock[transaction_id] = true;
         try {
           const payment = {
             transaction_id: transaction_id.toUpperCase(),
           };
           const response = await axios.post(
-            "http://local.web-whisper-update.test/api/customer/transaction/payment",
+            `${baseUrl}/api/customer/transaction/payment`,
             payment
           );
           const snapToken = response.data.payment_url;
@@ -313,30 +392,32 @@ async function startWhatsAppBot() {
           // Release the lock after processing is complete
           delete paymentLock[transaction_id];
         }
-      } else {
+      }
+      // PERINTAH TAMBAH MENU
+      else {
         const orders = pesan.split(",");
         let orderUpdated = false;
-
+        // cocokkan dengan perintah menu
         for (const orderText of orders) {
           const match = orderText.match(/^!(\w+)(?:\/(\d+))?$/);
           if (match) {
             const productName = match[1];
             const quantity = match[2] ? parseInt(match[2], 10) : 1;
+            // produk dengan input > 0 yang dihitung masuk keranjang
             if (quantity > 0) {
               const product = productData.find((product) => {
                 const formattedProductName = product.name
                   .toLowerCase()
                   .replace(/\s/g, "");
+                // produk jika ada variant
                 if (product.variant_name) {
                   const formattedVariantName = product.variant_name
                     .toLowerCase()
                     .replace(/\s/g, "");
-                  // Produk dengan variant_name harus diakses dengan nama + variant_name
                   return (
                     formattedProductName + formattedVariantName === productName
                   );
                 } else {
-                  // Produk tanpa variant_name bisa diakses hanya dengan nama
                   return formattedProductName === productName;
                 }
               });
@@ -356,14 +437,14 @@ async function startWhatsAppBot() {
                 orderUpdated = true;
               } else {
                 await socket.sendMessage(chat.key.remoteJid, {
-                  text: `Perintah ${productName} tidak ditemukan.`,
+                  text: `Perintah ${productName} tidak ditemukan.\n\nSilahkan ketik perintah dibawah untuk bantuan menggunakan chatbot\n> !help`,
                 });
                 return;
               }
             }
           }
         }
-
+        // update menu
         if (orderUpdated) {
           let orderDetails = "Pesanan Anda:\n";
           let totalCost = 0;
