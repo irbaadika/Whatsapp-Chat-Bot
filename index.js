@@ -1,9 +1,58 @@
 const {
-  makeWASocket,
+  default: makeWASocket,
+  MessageType,
+  MessageOptions,
+  Mimetype,
+  DisconnectReason,
+  BufferJSON,
+  AnyMessageContent,
+  delay,
+  fetchLatestBaileysVersion,
+  isJidBroadcast,
+  makeCacheableSignalKeyStore,
+  makeInMemoryStore,
+  MessageRetryMap,
   useMultiFileAuthState,
+  msgRetryCounterMap,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const axios = require("axios");
+const express = require("express");
+const fileUpload = require("express-fileupload");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const { Boom } = require("@hapi/boom");
+const app = require("express")();
+// Enable files upload
+app.use(
+  fileUpload({
+    createParentPath: true,
+  })
+);
+
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+const server = require("http").createServer(app);
+const io = require("socket.io")(server);
+const port = process.env.PORT || 5000;
+const qrcode = require("qrcode");
+
+app.use("/assets", express.static(__dirname + "/client/assets"));
+
+app.get("/scan", (req, res) => {
+  res.sendFile("./client/index.html", {
+    root: __dirname,
+  });
+});
+
+app.get("/", (req, res) => {
+  res.send("server working");
+});
+
+let socket;
+let qrDinamic;
+let soket;
 
 async function startWhatsAppBot() {
   try {
@@ -16,12 +65,44 @@ async function startWhatsAppBot() {
     });
 
     socket.ev.on("creds.update", auth.saveCreds);
-    socket.ev.on("connection.update", async ({ connection }) => {
-      if (connection === "open") {
-        console.log("WA Bot Ready!🎄🎋🎍🎎🎏");
-      } else if (connection === "close") {
-        await startWhatsAppBot();
-        console.log("Connection closed. Restarting...");
+    socket.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      qrDinamic = qr;
+      if (connection === "close") {
+        const reason = new Boom(lastDisconnect.error).output.statusCode;
+        if (reason === DisconnectReason.badSession) {
+          console.log("Bad Session File, Please Delete session and Scan Again");
+          socket.logout();
+        } else if (reason === DisconnectReason.connectionClosed) {
+          console.log("Connection closed, reconnecting...");
+          startWhatsAppBot();
+        } else if (reason === DisconnectReason.connectionLost) {
+          console.log("Connection lost, reconnecting...");
+          startWhatsAppBot();
+        } else if (reason === DisconnectReason.connectionReplaced) {
+          console.log(
+            "Connection replaced, another session opened, logging out current session"
+          );
+          socket.logout();
+        } else if (reason === DisconnectReason.loggedOut) {
+          console.log(
+            "Device logged out, please delete session and scan again."
+          );
+          socket.logout();
+        } else if (reason === DisconnectReason.restartRequired) {
+          console.log("Restart required, restarting...");
+          startWhatsAppBot();
+        } else if (reason === DisconnectReason.timedOut) {
+          console.log("Connection timed out, connecting...");
+          startWhatsAppBot();
+        } else {
+          socket.end(
+            `Unknown disconnect reason: ${reason} | ${lastDisconnect.error}`
+          );
+        }
+      } else if (connection === "open") {
+        console.log("Connection open");
+        return;
       }
     });
 
@@ -469,3 +550,94 @@ async function startWhatsAppBot() {
 }
 
 startWhatsAppBot();
+
+const isConnected = () => {
+  return socket?.user ? true : false;
+};
+
+app.get("/send-message", async (req, res) => {
+  const tempMessage = req.query.message;
+  const number = req.query.number;
+
+  let numberWA;
+  try {
+    if (!number) {
+      res.status(500).json({
+        status: false,
+        response: "Number Not Found!",
+      });
+    } else {
+      numberWA = "62" + number + "@s.whatsapp.net";
+
+      if (isConnected()) {
+        const exist = await socket.onWhatsApp(numberWA);
+
+        if (exist?.jid || (exist && exist[0]?.jid)) {
+          socket
+            .sendMessage(exist.jid || exist[0].jid, {
+              text: tempMessage,
+            })
+            .then((result) => {
+              res.status(200).json({
+                status: true,
+                response: result,
+              });
+            })
+            .catch((err) => {
+              res.status(500).json({
+                status: false,
+                response: err,
+              });
+            });
+        }
+      } else {
+        res.status(500).json({
+          status: false,
+          response: "Not Connected",
+        });
+      }
+    }
+  } catch (err) {
+    res.status(500).send(err);
+  }
+});
+
+io.on("connection", async (socket) => {
+  soket = socket;
+  if (isConnected()) {
+    updateQR("connected");
+  } else if (qrDinamic) {
+    updateQR("qr");
+  }
+});
+
+const updateQR = (data) => {
+  switch (data) {
+    case "qr":
+      qrcode.toDataURL(qrDinamic, (err, url) => {
+        soket?.emit("qr", url);
+        soket?.emit("log", "You get QR, scan now");
+      });
+      break;
+    case "connected":
+      soket?.emit("qrstatus", "./assets/check.svg");
+      soket?.emit("log", " User is :");
+      const { id, name } = socket?.user;
+      var userinfo = id + " " + name;
+      soket?.emit("user", userinfo);
+
+      break;
+    case "loading":
+      soket?.emit("qrstatus", "./assets/loader.gif");
+      soket?.emit("log", "Please wait...");
+
+      break;
+    default:
+      break;
+  }
+};
+
+startWhatsAppBot().catch((err) => console.log("unexpected error: " + err)); // catch any errors
+server.listen(port, () => {
+  console.log("Server Run Port : " + port);
+});
