@@ -1,48 +1,50 @@
 const {
   makeWASocket,
   useMultiFileAuthState,
+  DisconnectReason,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const axios = require("axios");
 const express = require("express");
 const app = express();
 const path = require("path");
-const QRCode = require("qrcode");
 
 const port = 3000;
 
-let qrCode = "";
-let isConnected = false;
-let userName = "";
-let userPhoneNumber = "";
-
 app.use(express.json());
-
 app.use(express.static(path.join(__dirname, "public")));
 
+// Menyimpan informasi sesi dan koneksi
+const sessions = {};
+
 // Endpoint untuk mendapatkan QR Code
-app.get("/qr-code", async (req, res) => {
-  try {
-    const qrCodeData = await QRCode.toDataURL(qrCode);
-    const base64Data = qrCodeData.replace(/^data:image\/png;base64,/, "");
-    res.json({ qrCode: base64Data });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to generate QR Code" });
+app.get("/qr-code/:session", (req, res) => {
+  const { session } = req.params;
+  if (sessions[session] && sessions[session].qrCode) {
+    res.json({ qrCode: sessions[session].qrCode });
+  } else {
+    res.status(404).json({ error: "QR Code not found" });
   }
 });
 
 // Endpoint untuk mendapatkan status koneksi
-app.get("/status", (req, res) => {
-  if (isConnected) {
-    res.json({ connected: true, name: userName, phone: userPhoneNumber });
+app.get("/status/:session", (req, res) => {
+  const { session } = req.params;
+  if (sessions[session] && sessions[session].isConnected) {
+    res.json({
+      connected: true,
+      name: sessions[session].userName,
+      phone: sessions[session].userPhoneNumber,
+    });
   } else {
     res.json({ connected: false });
   }
 });
 
-async function startWhatsAppBot() {
+async function startWhatsAppBot(session) {
   try {
-    const auth = await useMultiFileAuthState("session");
+    // Menggunakan MultiFileAuthState untuk menangani sesi
+    const auth = await useMultiFileAuthState(`session_${session}`);
     const socket = makeWASocket({
       printQRInTerminal: true,
       browser: ["WA Bot", "", ""],
@@ -50,36 +52,40 @@ async function startWhatsAppBot() {
       logger: pino({ level: "silent" }),
     });
 
+    sessions[session] = {
+      qrCode: "",
+      isConnected: false,
+      userName: "",
+      userPhoneNumber: "",
+      socket,
+      carts: {},
+      paymentLock: {},
+    };
+
     socket.ev.on("creds.update", auth.saveCreds);
     socket.ev.on(
       "connection.update",
       async ({ connection, lastDisconnect, qr }) => {
         if (connection === "open") {
-          isConnected = true;
-          userName = socket.user.name;
-          userPhoneNumber = socket.user.id.split(":")[0];
-          console.log(`WA Bot Ready! 🎄🎋🎍🎎🎏`);
+          sessions[session].isConnected = true;
+          sessions[session].userName = socket.user.name;
+          sessions[session].userPhoneNumber = socket.user.id.split(":")[0];
+          console.log(`WA Bot (${session}) Ready! 🎄🎋🎍🎎🎏`);
         } else if (connection === "close") {
-          isConnected = false;
-          userName = "";
-          userPhoneNumber = "";
-          console.log("Connection closed. Restarting...");
-          await startWhatsAppBot();
+          sessions[session].isConnected = false;
+          sessions[session].userName = "";
+          sessions[session].userPhoneNumber = "";
+          console.log(
+            `Connection closed for session ${session}. Restarting...`
+          );
+          delete sessions[session]; // Remove the session
+          await startWhatsAppBot(session); // Restart for the same session
         }
         if (qr) {
-          qrCode = qr;
+          sessions[session].qrCode = qr;
         }
       }
     );
-
-    let productData = [];
-    const user = socket.user;
-    const phoneNumber = user.id.split(":")[0];
-    const baseUrl = "http://local.web-whisper-update.test";
-    const endpoint = `http://local.web-whisper-update.test/api/${phoneNumber}/products`;
-
-    const carts = {};
-    const paymentLock = {};
 
     socket.ev.on("messages.upsert", async ({ messages, type }) => {
       const chat = messages[0];
@@ -97,8 +103,8 @@ async function startWhatsAppBot() {
         chat.message?.conversation;
 
       // Batasi cart per user id
-      if (!carts[userId]) {
-        carts[userId] = [];
+      if (!sessions[session].carts[userId]) {
+        sessions[session].carts[userId] = [];
       }
 
       // BAYAR JIKA PESAN MELALUI WEBSITE
@@ -114,7 +120,7 @@ async function startWhatsAppBot() {
             text: `Hi, ${customerName}, Pesanan kamu dengan kode ${transactionCode} berhasil dibuat`,
           });
 
-          paymentLock[transactionCode] = true;
+          sessions[session].paymentLock[transactionCode] = true;
 
           const payment = {
             transaction_id: transactionCode.toUpperCase(),
@@ -137,7 +143,7 @@ async function startWhatsAppBot() {
             console.log(error.response.data);
           } finally {
             // Release the lock for this transaction_id
-            delete paymentLock[transactionCode];
+            delete sessions[session].paymentLock[transactionCode];
           }
         } else {
           await socket.sendMessage(chat.key.remoteJid, {
@@ -221,301 +227,38 @@ async function startWhatsAppBot() {
             });
           } else {
             // const rateUrl = `${baseUrl}/rate/${transactionCode.toUpperCase()}`;
-            const rateUrl = `https://38db-182-4-134-129.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
+            const rateUrl = `https://38db-182-4-248-155.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
             await socket.sendMessage(chat.key.remoteJid, {
-              text: `Silahkan klik tautan di bawah ini untuk melakukan penilaian pada produk yang anda pesan\n\n${rateUrl}`,
+              text: `Silahkan beri rating untuk pesanan kamu di tautan ini: ${rateUrl}`,
             });
           }
         } catch (error) {
           await socket.sendMessage(chat.key.remoteJid, {
-            text: "Format yang anda masukkan salah!",
+            text: "Terjadi kesalahan saat melakukan pelacakan. Silakan coba lagi nanti.",
           });
         }
       }
-      // TAMPILKAN MENU
+      // SHOW MENU
       else if (pesan === "!menu") {
-        try {
-          const response = await axios.get(
-            `${baseUrl}/api/${phoneNumber}/products`
-          );
-          productData = response.data.products;
-
-          if (productData.length > 0) {
-            // Group produk berdasarkan kategori
-            const groupedProducts = {};
-            productData.forEach((product) => {
-              if (!groupedProducts[product.category]) {
-                groupedProducts[product.category] = [];
-              }
-              groupedProducts[product.category].push(product);
-            });
-
-            let productNames = "";
-            // Tampilkan menu berdasarkan kategori
-            Object.keys(groupedProducts).forEach((category) => {
-              productNames += `MENU ${category.toUpperCase()}\n\n`;
-              productNames += groupedProducts[category]
-                .map((product) => {
-                  if (product.variant_name) {
-                    return `${product.name} ${product.variant_name} - Rp. ${
-                      product.price
-                    }\n    \`\`\`!${product.name
-                      .toLowerCase()
-                      .replace(/\s/g, "")}${product.variant_name
-                      .toLowerCase()
-                      .replace(/\s/g, "")}\`\`\``;
-                  } else {
-                    return `${product.name} - Rp. ${
-                      product.price
-                    }\n    \`\`\`!${product.name
-                      .toLowerCase()
-                      .replace(/\s/g, "")}\`\`\``;
-                  }
-                })
-                .join("\n\n");
-              productNames += "\n\n";
-            });
-
-            await socket.sendMessage(chat.key.remoteJid, {
-              text: `\*MENU\*\n\n${productNames}\n\n\*Cara pesan\*\n> Pesan 1 menu :\n> \`\`\`    !bakso\`\`\`\n> Pesan 1 menu jumlah banyak :\n> \`\`\`    !bakso/2\`\`\`\n> Pesan beberapa menu :\n> \`\`\`    !bakso/2,!mie\`\`\``,
-            });
-          } else {
-            await socket.sendMessage(chat.key.remoteJid, {
-              text: "Failed to fetch product data.",
-            });
-          }
-        } catch (error) {
-          console.error(
-            "Error fetching data from Laravel endpoint:",
-            error.response
-          );
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Failed to fetch product data. Please try again later.",
-          });
-        }
-      }
-      // PESAN MENU LAGI
-      else if (pesan === "!pesanlagi") {
         await socket.sendMessage(chat.key.remoteJid, {
-          text: "Silakan pilih menu dan jumlah pesanan lagi.",
+          text: "*MENU*\n\n`!track@kode_transaksi`\n> Melacak status pesanan\n\n`!help`\n> Menampilkan bantuan untuk menggunakan bot\n\n`!rate@kode_transaksi`\n> Menilai pesanan setelah diterima\n\n*Silakan pilih salah satu menu di atas*",
         });
-      }
-      // CHECKOUT
-      else if (pesan === "!checkout") {
-        let orderDetails = "Pesanan Anda:\n";
-        let totalCost = 0;
-        for (const item of carts[userId]) {
-          const product = productData.find((p) => p.id === item.product_id);
-          if (product) {
-            const subtotal = product.price * item.quantity;
-            orderDetails += `${item.quantity} ${product.name} ${product.variant_name} - Rp. ${subtotal}\n`;
-            totalCost += subtotal;
-          }
-        }
-        orderDetails += `Total Rp. ${totalCost}\n\nAnda yakin ingin memesan?\n\`\`\`    !yakin\`\`\``;
-        await socket.sendMessage(chat.key.remoteJid, {
-          text: orderDetails,
-        });
-      }
-      // CHECKOUT #2
-      else if (pesan === "!yakin") {
-        await socket.sendMessage(chat.key.remoteJid, {
-          text: `Jika anda yakin dengan pesanan anda maka ketikkan\n\`\`\` !pesan@nama@alamat\`\`\`\n\nContoh\n> !pesan@Irba@Jalan Mawar No.1`,
-        });
-      }
-      // BAYAR JIKA PESAN MELALUI CHAT
-      else if (pesan.startsWith("!pesan")) {
-        const [, name, address] = pesan.split("@");
-        const customerPhoneNumber = chat.key.remoteJid.split("@")[0];
-        if (!name || !address) {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Format pesanan salah. Silakan coba lagi.",
-          });
-          return;
-        }
-        if (carts[userId].length === 0) {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Mohon maaf, pesanan Anda belum ada karena keranjang belanja masih kosong.",
-          });
-          return;
-        } else {
-          const order = {
-            name: name.trim(),
-            phone_number: customerPhoneNumber,
-            address: address.trim(),
-            products: carts[userId],
-          };
-          try {
-            const response = await axios.post(
-              `${baseUrl}/api/customer/transaction`,
-              order
-            );
-            const transactionCode = response.data.result.code;
-            await socket.sendMessage(chat.key.remoteJid, {
-              text: `Pesanan Anda berhasil dibuat dengan kode:`,
-            });
-            await socket.sendMessage(chat.key.remoteJid, {
-              text: `${transactionCode}`,
-            });
-            carts[userId] = [];
-
-            // payment midtrans
-            paymentLock[transactionCode] = true;
-
-            const payment = {
-              transaction_id: transactionCode.toUpperCase(),
-            };
-            try {
-              const response = await axios.post(
-                `${baseUrl}/api/customer/transaction/payment`,
-                payment
-              );
-              const snapToken = response.data.payment_url;
-              // Mengirim pesan ketiga
-              await socket.sendMessage(chat.key.remoteJid, {
-                text: `Silahkan lakukan pembayaran dengan menekan tautan berikut ini:\n${snapToken}`,
-              });
-            } catch (error) {
-              await socket.sendMessage(chat.key.remoteJid, {
-                text: `Gagal mendapatkan kode pembayaran, silahkan lakukan kembali dengan mengetikkan\n\`\`\`!bayar@t\`\`\`\n> !bayar@TRX-2000000000`,
-              });
-              console.log(error.response.data);
-            } finally {
-              // Release the lock for this transaction_id
-              delete paymentLock[transactionCode];
-            }
-          } catch (error) {
-            console.log(error.response.data);
-            await socket.sendMessage(chat.key.remoteJid, {
-              text: `Gagal memesan. Silakan coba lagi nanti.${name}`,
-            });
-          }
-        }
-      }
-      // KOSONGKAN KERANJANG
-      else if (pesan === "!kosongkankeranjang") {
-        carts[userId] = []; // Clear the cart for this user
-        await socket.sendMessage(chat.key.remoteJid, {
-          text: `Keranjang anda berhasil dikosongkan`,
-        });
-      }
-      // BAYAR MELALUI KODE TRANSAKSI
-      else if (pesan.startsWith("!bayar")) {
-        const [, transaction_id] = pesan.split("@");
-        if (!transaction_id) {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Format pesanan salah. Silakan coba lagi.",
-          });
-          return;
-        }
-        if (paymentLock[transaction_id]) {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: "Permintaan pembayaran sedang diproses. Mohon tunggu sebentar.",
-          });
-          return;
-        }
-
-        // payment midtrans
-        paymentLock[transaction_id] = true;
-        try {
-          const payment = {
-            transaction_id: transaction_id.toUpperCase(),
-          };
-          const response = await axios.post(
-            `${baseUrl}/api/customer/transaction/payment`,
-            payment
-          );
-          const snapToken = response.data.payment_url;
-          // Mengirim pesan kedua
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: `${snapToken}`,
-          });
-        } catch (error) {
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: `Pembayaran Gagal, Silakan coba lagi nanti.`,
-          });
-          console.log(error.response.data);
-        } finally {
-          // Release the lock after processing is complete
-          delete paymentLock[transaction_id];
-        }
-      }
-      // PERINTAH TAMBAH MENU
-      else {
-        const orders = pesan.split(",");
-        let orderUpdated = false;
-        // cocokkan dengan perintah menu
-        for (const orderText of orders) {
-          const match = orderText.match(/^!(\w+)(?:\/(\d+))?$/);
-          if (match) {
-            const productName = match[1];
-            const quantity = match[2] ? parseInt(match[2], 10) : 1;
-            // produk dengan input > 0 yang dihitung masuk keranjang
-            if (quantity > 0) {
-              const product = productData.find((product) => {
-                const formattedProductName = product.name
-                  .toLowerCase()
-                  .replace(/\s/g, "");
-                // produk jika ada variant
-                if (product.variant_name) {
-                  const formattedVariantName = product.variant_name
-                    .toLowerCase()
-                    .replace(/\s/g, "");
-                  return (
-                    formattedProductName + formattedVariantName === productName
-                  );
-                } else {
-                  return formattedProductName === productName;
-                }
-              });
-
-              if (product) {
-                const existingItemIndex = carts[userId].findIndex(
-                  (item) => item.product_id === product.id
-                );
-                if (existingItemIndex !== -1) {
-                  carts[userId][existingItemIndex].quantity += quantity;
-                } else {
-                  carts[userId].push({
-                    product_id: product.id,
-                    quantity: quantity,
-                  });
-                }
-                orderUpdated = true;
-              } else {
-                await socket.sendMessage(chat.key.remoteJid, {
-                  text: `Perintah ${productName} tidak ditemukan.\n\nSilahkan ketik perintah dibawah untuk bantuan menggunakan chatbot\n> !help`,
-                });
-                return;
-              }
-            }
-          }
-        }
-        // update menu
-        if (orderUpdated) {
-          let orderDetails = "Pesanan Anda:\n";
-          let totalCost = 0;
-          for (const item of carts[userId]) {
-            const product = productData.find((p) => p.id === item.product_id);
-            if (product) {
-              const subtotal = product.price * item.quantity;
-              orderDetails += `${item.quantity} ${product.name} ${product.variant_name} - Rp. ${subtotal}\n`;
-              totalCost += subtotal;
-            }
-          }
-          orderDetails += `Total Rp. ${totalCost}\n\nAnda ingin memesan menu lagi?\n\`\`\`    !pesanlagi\`\`\`\n\nAnda ingin lanjut checkout?\n\`\`\`    !checkout\`\`\``;
-          await socket.sendMessage(chat.key.remoteJid, {
-            text: orderDetails,
-          });
-        }
       }
     });
+
+    console.log(`Starting WhatsApp Bot for session ${session}`);
   } catch (error) {
-    console.error("Error starting WhatsApp bot:", error);
+    console.error(
+      `Failed to start WhatsApp Bot for session ${session}:`,
+      error
+    );
+    setTimeout(() => startWhatsAppBot(session), 5000); // Restart after 5 seconds on failure
   }
 }
 
-startWhatsAppBot();
+// Mulai sesi untuk beberapa session
+const sessionsList = ["session1", "session2"]; // Tambahkan nama sesi sesuai kebutuhan
+sessionsList.forEach(startWhatsAppBot);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
