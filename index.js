@@ -4,6 +4,41 @@ const {
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const axios = require("axios");
+const express = require("express");
+const app = express();
+const path = require("path");
+const QRCode = require("qrcode");
+
+const port = 3000;
+
+let qrCode = "";
+let isConnected = false;
+let userName = "";
+let userPhoneNumber = "";
+
+app.use(express.json());
+
+app.use(express.static(path.join(__dirname, "public")));
+
+// Endpoint untuk mendapatkan QR Code
+app.get("/qr-code", async (req, res) => {
+  try {
+    const qrCodeData = await QRCode.toDataURL(qrCode);
+    const base64Data = qrCodeData.replace(/^data:image\/png;base64,/, "");
+    res.json({ qrCode: base64Data });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate QR Code" });
+  }
+});
+
+// Endpoint untuk mendapatkan status koneksi
+app.get("/status", (req, res) => {
+  if (isConnected) {
+    res.json({ connected: true, name: userName, phone: userPhoneNumber });
+  } else {
+    res.json({ connected: false });
+  }
+});
 
 async function startWhatsAppBot() {
   try {
@@ -16,14 +51,26 @@ async function startWhatsAppBot() {
     });
 
     socket.ev.on("creds.update", auth.saveCreds);
-    socket.ev.on("connection.update", async ({ connection }) => {
-      if (connection === "open") {
-        console.log("WA Bot Ready!🎄🎋🎍🎎🎏");
-      } else if (connection === "close") {
-        await startWhatsAppBot();
-        console.log("Connection closed. Restarting...");
+    socket.ev.on(
+      "connection.update",
+      async ({ connection, lastDisconnect, qr }) => {
+        if (connection === "open") {
+          isConnected = true;
+          userName = socket.user.name;
+          userPhoneNumber = socket.user.id.split(":")[0];
+          console.log(`WA Bot Ready! 🎄🎋🎍🎎🎏`);
+        } else if (connection === "close") {
+          isConnected = false;
+          userName = "";
+          userPhoneNumber = "";
+          console.log("Connection closed. Restarting...");
+          await startWhatsAppBot();
+        }
+        if (qr) {
+          qrCode = qr;
+        }
       }
-    });
+    );
 
     let productData = [];
     const user = socket.user;
@@ -385,7 +432,7 @@ async function startWhatsAppBot() {
           });
         } catch (error) {
           await socket.sendMessage(chat.key.remoteJid, {
-            text: `Gagal Silakan coba lagi nanti.${error.response.data}`,
+            text: `Pembayaran Gagal, Silakan coba lagi nanti.`,
           });
           console.log(error.response.data);
         } finally {
@@ -469,3 +516,7 @@ async function startWhatsAppBot() {
 }
 
 startWhatsAppBot();
+
+app.listen(port, () => {
+  console.log(`Server listening at http://localhost:${port}`);
+});
