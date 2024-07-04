@@ -111,7 +111,11 @@ async function startWhatsAppBot() {
           const customerName = customerNameMatch[1];
 
           await socket.sendMessage(chat.key.remoteJid, {
-            text: `Hi, ${customerName}, Pesanan kamu dengan kode ${transactionCode} berhasil dibuat`,
+            text: `Hi, ${customerName}, Pesanan kamu dengan kode ${transactionCode} berhasil dibuat dengan kode transaksi di bawah ini`,
+          });
+
+          await socket.sendMessage(chat.key.remoteJid, {
+            text: `${transactionCode}`,
           });
 
           paymentLock[transactionCode] = true;
@@ -129,6 +133,9 @@ async function startWhatsAppBot() {
             // Mengirim pesan ketiga
             await socket.sendMessage(chat.key.remoteJid, {
               text: `Silahkan lakukan pembayaran dengan menekan tautan berikut ini:\n${snapToken}`,
+            });
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: `Hai kami mempunyai fitur chatbot. Untuk menggunakan chatbot ketikkan perintah di bawah\n> !help`,
             });
           } catch (error) {
             await socket.sendMessage(chat.key.remoteJid, {
@@ -187,7 +194,8 @@ async function startWhatsAppBot() {
               statusMessage = `> Sedang dikirim\n\nInformasi Pengirim\nPengirim: ${sender.name}\nNo HP: 0${sender.phone_number}`;
               break;
             case "Fullfilled":
-              statusMessage = `> Sudah Diterima\n\nInformasi Penerima\nPenerima: ${customer.name}\nAlamat: ${customer.address}\npada ${updatedAt}\n\nAnda bisa melakukan rating produk kami dengan\n\`\`\`    !rate@kodetransaksi\`\`\``;
+              const rateUrl = `https://38db-182-4-134-129.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
+              statusMessage = `> Sudah Diterima\n\nInformasi Penerima\nPenerima: ${customer.name}\nAlamat: ${customer.address}\npada ${updatedAt}\n\nTerimakasih telah memesan produk kami\nAnda bisa melakukan rating produk kami dengan klik tautan di bawah ini\n\n${rateUrl}`;
               break;
             default:
               break;
@@ -239,6 +247,7 @@ async function startWhatsAppBot() {
             `${baseUrl}/api/${phoneNumber}/products`
           );
           productData = response.data.products;
+          console.log(productData);
 
           if (productData.length > 0) {
             // Group produk berdasarkan kategori
@@ -357,6 +366,9 @@ async function startWhatsAppBot() {
             await socket.sendMessage(chat.key.remoteJid, {
               text: `${transactionCode}`,
             });
+            await socket.sendMessage(chat.key.remoteJid, {
+              text: "Anda juga bisa melakukan lacak pesanan anda dengan mengetikkan\n```    !track@kodetransaksi```",
+            });
             carts[userId] = [];
 
             // payment midtrans
@@ -386,8 +398,12 @@ async function startWhatsAppBot() {
             }
           } catch (error) {
             console.log(error.response.data);
+            let errorMessage = error.response.data.error;
+            if (errorMessage.startsWith("Insufficient stock for product")) {
+              errorMessage = "Stok tidak mencukupi";
+            }
             await socket.sendMessage(chat.key.remoteJid, {
-              text: `Gagal memesan. Silakan coba lagi nanti.${name}`,
+              text: `Gagal memesan karena ${errorMessage}. Silakan coba lagi nanti.`,
             });
           }
         }

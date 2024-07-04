@@ -41,7 +41,7 @@
 
           if (data.connected) {
             qrCodeImg.style.display = "none"; // Sembunyikan QR Code jika terhubung
-            statusDiv.innerText = `Connected as ${data.name} (${data.phone})`;
+            statusDiv.innerText = `Connected as (${data.phone})`;
           } else {
             qrCodeImg.style.display = "block"; // Tampilkan QR Code jika tidak terhubung
             statusDiv.innerText = "Belum terhubung dengan Chat Bot Web Whisper";
