@@ -29,9 +29,20 @@
     </div>
 
     <script>
+      // Ambil sessionId dari URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionId =
+        urlParams.get("sessionId") || window.location.pathname.split("/").pop();
+
+      if (!sessionId) {
+        document.getElementById("status").innerText =
+          "Session ID tidak ditemukan";
+        throw new Error("sessionId is required");
+      }
+
       async function updateStatus() {
         try {
-          const response = await fetch("/status");
+          const response = await fetch(`/status/${sessionId}`);
           if (!response.ok) {
             throw new Error("Network response was not ok");
           }
@@ -41,7 +52,7 @@
 
           if (data.connected) {
             qrCodeImg.style.display = "none"; // Sembunyikan QR Code jika terhubung
-            statusDiv.innerText = `Connected as (${data.phone})`;
+            statusDiv.innerText = `Connected as ${data.name} (${data.phone})`;
           } else {
             qrCodeImg.style.display = "block"; // Tampilkan QR Code jika tidak terhubung
             statusDiv.innerText = "Belum terhubung dengan Chat Bot Web Whisper";
@@ -54,7 +65,7 @@
 
       async function updateQRCode() {
         try {
-          const response = await fetch("/qr-code");
+          const response = await fetch(`/qr-code/${sessionId}`);
           if (!response.ok) {
             throw new Error("Network response was not ok");
           }
