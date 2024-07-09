@@ -153,7 +153,7 @@ async function startWhatsAppBot() {
         }
       }
       // HELP
-      else if (pesan === "!help") {
+      else if (pesan === "!help" || pesan === "! help") {
         await socket.sendMessage(chat.key.remoteJid, {
           text: "*TUTORIAL MENGGUNAKAN BOT*\n\n> Ketikkan ! di awal untuk menjalankan perintah sesuai dengan yang disediakan\n\nTampilkan Menu\n```    !menu```\n\nKosongkan Keranjang\n```    !kosongkankeranjang```\n\nLacak Paket\n```    !track@kodetransaksi```",
         });
@@ -306,7 +306,7 @@ async function startWhatsAppBot() {
       // PESAN MENU LAGI
       else if (pesan === "!pesanlagi") {
         await socket.sendMessage(chat.key.remoteJid, {
-          text: "Silakan pilih menu dan jumlah pesanan lagi.",
+          text: "Silahkan inputkan lagi menu yang ingin anda pesan atau tampilkan menu dengan perintah seperti dibawah\n> !menu",
         });
       }
       // CHECKOUT
@@ -399,11 +399,35 @@ async function startWhatsAppBot() {
           } catch (error) {
             console.log(error.response.data);
             let errorMessage = error.response.data.error;
-            if (errorMessage.startsWith("Insufficient stock for product")) {
+
+            // Handle specific stock error messages
+            if (
+              error.response.data.errors &&
+              error.response.data.errors.stock
+            ) {
+              let stockErrors = error.response.data.errors.stock;
+
+              // Format the error message to include specific products
+              let formattedErrors = stockErrors
+                .map((error) => {
+                  if (error.startsWith("Insufficient stock for product:")) {
+                    // Extract the product name from the error message
+                    let productName = error.split(":")[1].trim();
+                    return `stok ${productName} tidak cukup`;
+                  }
+                  return error;
+                })
+                .join(", "); // Combine all errors with a semicolon
+
+              errorMessage = `Gagal memesan karena ${formattedErrors}. Silakan coba lagi nanti.`;
+            } else if (
+              errorMessage.startsWith("Insufficient stock for product")
+            ) {
               errorMessage = "Stok tidak mencukupi";
             }
+
             await socket.sendMessage(chat.key.remoteJid, {
-              text: `Gagal memesan karena ${errorMessage}. Silakan coba lagi nanti.`,
+              text: errorMessage,
             });
           }
         }
