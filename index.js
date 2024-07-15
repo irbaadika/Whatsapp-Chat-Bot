@@ -11,38 +11,51 @@ const QRCode = require("qrcode");
 
 const port = 3000;
 
-let qrCode = "";
-let isConnected = false;
-let userName = "";
-let userPhoneNumber = "";
+let qrCodes = {};
+let connections = {};
+let currentPhoneNumber = "";
 
+// Middleware untuk parsing JSON
 app.use(express.json());
-
 app.use(express.static(path.join(__dirname, "public")));
 
-// Endpoint untuk mendapatkan QR Code
-app.get("/qr-code", async (req, res) => {
+// Endpoint untuk memulai bot dengan nomor telepon
+app.get("/start-bot/:phoneNumber", async (req, res) => {
+  const phoneNumber = req.params.phoneNumber;
+  if (connections[phoneNumber]) {
+    return res.redirect("/"); // Jika bot sudah berjalan untuk nomor ini
+  }
+
   try {
-    const qrCodeData = await QRCode.toDataURL(qrCode);
-    const base64Data = qrCodeData.replace(/^data:image\/png;base64,/, "");
-    res.json({ qrCode: base64Data });
+    await startWhatsAppBot(phoneNumber); // Mulai bot dengan nomor telepon
+    res.redirect("/"); // Arahkan kembali ke halaman utama
   } catch (error) {
-    res.status(500).json({ error: "Failed to generate QR Code" });
+    res.status(500).json({ error: "Failed to start WhatsApp Bot" });
+  }
+});
+
+// Endpoint untuk mendapatkan QR Code
+app.get("/qr-code", (req, res) => {
+  if (qrCodes[currentPhoneNumber]) {
+    res.json({ qrCode: qrCodes[currentPhoneNumber] });
+  } else {
+    res.status(404).json({ error: "QR Code not available" });
   }
 });
 
 // Endpoint untuk mendapatkan status koneksi
 app.get("/status", (req, res) => {
-  if (isConnected) {
-    res.json({ connected: true, name: userName, phone: userPhoneNumber });
-  } else {
-    res.json({ connected: false });
-  }
+  const isConnected = connections[currentPhoneNumber]?.isConnected || false;
+  const userName = connections[currentPhoneNumber]?.userName || "";
+  const userPhoneNumber = currentPhoneNumber || "";
+  res.json({ connected: isConnected, name: userName, phone: userPhoneNumber });
 });
 
-async function startWhatsAppBot() {
+async function startWhatsAppBot(phoneNumber) {
+  currentPhoneNumber = phoneNumber;
+
   try {
-    const auth = await useMultiFileAuthState("session");
+    const auth = await useMultiFileAuthState(`session_${phoneNumber}`);
     const socket = makeWASocket({
       printQRInTerminal: true,
       browser: ["WA Bot", "", ""],
@@ -50,31 +63,39 @@ async function startWhatsAppBot() {
       logger: pino({ level: "silent" }),
     });
 
+    connections[phoneNumber] = {
+      socket,
+      isConnected: false,
+      userName: "",
+      qrCode: "",
+    };
+
     socket.ev.on("creds.update", auth.saveCreds);
     socket.ev.on(
       "connection.update",
       async ({ connection, lastDisconnect, qr }) => {
         if (connection === "open") {
-          isConnected = true;
-          userName = socket.user.name;
-          userPhoneNumber = socket.user.id.split(":")[0];
-          console.log(`WA Bot Ready! 🎄🎋🎍🎎🎏`);
+          connections[phoneNumber].isConnected = true;
+          connections[phoneNumber].userName = socket.user.name;
+          console.log(`WA Bot Ready for ${phoneNumber} 🎄🎋🎍🎎🎏`);
         } else if (connection === "close") {
-          isConnected = false;
-          userName = "";
-          userPhoneNumber = "";
-          console.log("Connection closed. Restarting...");
-          await startWhatsAppBot();
+          connections[phoneNumber].isConnected = false;
+          connections[phoneNumber].userName = "";
+          console.log(`Connection closed for ${phoneNumber}. Restarting...`);
+          await startWhatsAppBot(phoneNumber);
         }
         if (qr) {
-          qrCode = qr;
+          const qrCodeData = await QRCode.toDataURL(qr);
+          qrCodes[phoneNumber] = qrCodeData.replace(
+            /^data:image\/png;base64,/,
+            ""
+          );
         }
       }
     );
 
     let productData = [];
     const user = socket.user;
-    const phoneNumber = user.id.split(":")[0];
     const baseUrl = "http://local.web-whisper-update.test";
     const endpoint = `http://local.web-whisper-update.test/api/${phoneNumber}/products`;
 
@@ -91,15 +112,15 @@ async function startWhatsAppBot() {
         return;
       }
 
-      const pesan =
-        chat.message?.extendedTextMessage?.text ??
-        chat.message?.ephemeralMessage?.message?.extendedTextMessage?.text ??
-        chat.message?.conversation;
-
       // Batasi cart per user id
       if (!carts[userId]) {
         carts[userId] = [];
       }
+
+      const pesan =
+        chat.message?.extendedTextMessage?.text ??
+        chat.message?.ephemeralMessage?.message?.extendedTextMessage?.text ??
+        chat.message?.conversation;
 
       // BAYAR JIKA PESAN MELALUI WEBSITE
       if (pesan.startsWith("Hi, Admin")) {
@@ -153,7 +174,7 @@ async function startWhatsAppBot() {
         }
       }
       // HELP
-      else if (pesan === "!help") {
+      else if (pesan === "!help" || pesan === "! help") {
         await socket.sendMessage(chat.key.remoteJid, {
           text: "*TUTORIAL MENGGUNAKAN BOT*\n\n> Ketikkan ! di awal untuk menjalankan perintah sesuai dengan yang disediakan\n\nTampilkan Menu\n```    !menu```\n\nKosongkan Keranjang\n```    !kosongkankeranjang```\n\nLacak Paket\n```    !track@kodetransaksi```",
         });
@@ -246,8 +267,9 @@ async function startWhatsAppBot() {
           const response = await axios.get(
             `${baseUrl}/api/${phoneNumber}/products`
           );
+          console.log(user.phone_number);
           productData = response.data.products;
-          console.log(productData);
+          // console.log(productData);
 
           if (productData.length > 0) {
             // Group produk berdasarkan kategori
@@ -306,7 +328,7 @@ async function startWhatsAppBot() {
       // PESAN MENU LAGI
       else if (pesan === "!pesanlagi") {
         await socket.sendMessage(chat.key.remoteJid, {
-          text: "Silakan pilih menu dan jumlah pesanan lagi.",
+          text: "Silahkan inputkan lagi menu yang ingin anda pesan atau tampilkan menu dengan perintah seperti dibawah\n> !menu",
         });
       }
       // CHECKOUT
@@ -399,11 +421,35 @@ async function startWhatsAppBot() {
           } catch (error) {
             console.log(error.response.data);
             let errorMessage = error.response.data.error;
-            if (errorMessage.startsWith("Insufficient stock for product")) {
+
+            // Handle specific stock error messages
+            if (
+              error.response.data.errors &&
+              error.response.data.errors.stock
+            ) {
+              let stockErrors = error.response.data.errors.stock;
+
+              // Format the error message to include specific products
+              let formattedErrors = stockErrors
+                .map((error) => {
+                  if (error.startsWith("Insufficient stock for product:")) {
+                    // Extract the product name from the error message
+                    let productName = error.split(":")[1].trim();
+                    return `stok ${productName} tidak cukup`;
+                  }
+                  return error;
+                })
+                .join(", "); // Combine all errors with a semicolon
+
+              errorMessage = `Gagal memesan karena ${formattedErrors}. Silakan coba lagi nanti.`;
+            } else if (
+              errorMessage.startsWith("Insufficient stock for product")
+            ) {
               errorMessage = "Stok tidak mencukupi";
             }
+
             await socket.sendMessage(chat.key.remoteJid, {
-              text: `Gagal memesan karena ${errorMessage}. Silakan coba lagi nanti.`,
+              text: errorMessage,
             });
           }
         }
@@ -530,8 +576,6 @@ async function startWhatsAppBot() {
     console.error("Error starting WhatsApp bot:", error);
   }
 }
-
-startWhatsAppBot();
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
