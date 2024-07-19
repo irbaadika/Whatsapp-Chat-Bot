@@ -8,12 +8,15 @@ const express = require("express");
 const app = express();
 const path = require("path");
 const QRCode = require("qrcode");
+const cors = require("cors");
+require("dotenv").config();
 
 const port = 3000;
 
 let qrCodes = {};
 let connections = {};
 let currentPhoneNumber = "";
+app.use(cors());
 
 // Middleware untuk parsing JSON
 app.use(express.json());
@@ -49,6 +52,17 @@ app.get("/status", (req, res) => {
   const userName = connections[currentPhoneNumber]?.userName || "";
   const userPhoneNumber = currentPhoneNumber || "";
   res.json({ connected: isConnected, name: userName, phone: userPhoneNumber });
+});
+
+function checkSessionName(sessionName) {
+  return connections.hasOwnProperty(sessionName);
+}
+
+// Endpoint untuk mengecek apakah nama sesi sudah ada
+app.get("/check-session/:sessionName", (req, res) => {
+  const sessionName = req.params.sessionName;
+  const sessionExists = checkSessionName(sessionName);
+  res.json({ sessionExists });
 });
 
 async function startWhatsAppBot(phoneNumber) {
@@ -96,7 +110,10 @@ async function startWhatsAppBot(phoneNumber) {
 
     let productData = [];
     const user = socket.user;
-    const baseUrl = "http://local.web-whisper-update.test";
+
+    const baseUrl = process.env.BASE_URL;
+    console.log(baseUrl);
+    // const baseUrl = "http://local.web-whisper-update.test";
     const endpoint = `http://local.web-whisper-update.test/api/${phoneNumber}/products`;
 
     const carts = {};
