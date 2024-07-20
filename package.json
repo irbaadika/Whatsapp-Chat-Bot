@@ -4,7 +4,8 @@
   "description": "WhatsApp bot using @whiskeysockets/baileys",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "build": "npm install && npm run start"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.6.0",
