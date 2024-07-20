@@ -8,6 +8,7 @@ const express = require("express");
 const app = express();
 const path = require("path");
 const QRCode = require("qrcode");
+const fs = require("fs");
 const cors = require("cors");
 require("dotenv").config();
 
@@ -63,6 +64,34 @@ app.get("/check-session/:sessionName", (req, res) => {
   const sessionName = req.params.sessionName;
   const sessionExists = checkSessionName(sessionName);
   res.json({ sessionExists });
+});
+
+app.get("/remove-session/:phoneNumber", (req, res) => {
+  const phoneNumber = req.params.phoneNumber;
+  const sessionDir = path.join(__dirname, `session_${phoneNumber}`);
+
+  // Check if the session directory exists
+  if (fs.existsSync(sessionDir)) {
+    // Remove the session directory and its contents
+    fs.rm(sessionDir, { recursive: true, force: true }, (err) => {
+      if (err) {
+        console.error("Error removing session files:", err);
+        return res
+          .status(500)
+          .json({ error: "Failed to remove session files" });
+      }
+
+      // Remove the connection from the active connections
+      delete connections[phoneNumber];
+      delete qrCodes[phoneNumber];
+
+      res.json({
+        message: `Session files for ${phoneNumber} have been removed`,
+      });
+    });
+  } else {
+    res.status(404).json({ error: "Session files not found" });
+  }
 });
 
 async function startWhatsAppBot(phoneNumber) {
