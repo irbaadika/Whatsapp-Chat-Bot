@@ -38,21 +38,22 @@ app.get("/start-bot/:phoneNumber", async (req, res) => {
   }
 });
 
-// Endpoint untuk mendapatkan QR Code
-app.get("/qr-code", (req, res) => {
-  if (qrCodes[currentPhoneNumber]) {
-    res.json({ qrCode: qrCodes[currentPhoneNumber] });
+// Endpoint untuk mendapatkan QR Code berdasarkan nomor telepon
+app.get("/qr-code/:phoneNumber", (req, res) => {
+  const phoneNumber = req.params.phoneNumber;
+  if (qrCodes[phoneNumber]) {
+    res.json({ qrCode: qrCodes[phoneNumber] });
   } else {
     res.status(404).json({ error: "QR Code not available" });
   }
 });
 
-// Endpoint untuk mendapatkan status koneksi
-app.get("/status", (req, res) => {
-  const isConnected = connections[currentPhoneNumber]?.isConnected || false;
-  const userName = connections[currentPhoneNumber]?.userName || "";
-  const userPhoneNumber = currentPhoneNumber || "";
-  res.json({ connected: isConnected, name: userName, phone: userPhoneNumber });
+// Endpoint untuk mendapatkan status koneksi berdasarkan nomor telepon
+app.get("/status/:phoneNumber", (req, res) => {
+  const phoneNumber = req.params.phoneNumber;
+  const isConnected = connections[phoneNumber]?.isConnected || false;
+  const userName = connections[phoneNumber]?.userName || "";
+  res.json({ connected: isConnected, name: userName, phone: phoneNumber });
 });
 
 function checkSessionName(sessionName) {

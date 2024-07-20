@@ -44,6 +44,8 @@
   </head>
   <body>
     <h1>WhatsApp Bot Status</h1>
+    <input type="text" id="phone-number" placeholder="Enter phone number" />
+    <button onclick="updateStatus()">Check Status</button>
     <img id="qr-code" src="" alt="QR Code" />
     <div class="status">
       <h2>Status Koneksi</h2>
@@ -54,8 +56,14 @@
 
     <script>
       async function updateStatus() {
+        const phoneNumber = document.getElementById("phone-number").value;
+        if (!phoneNumber) {
+          alert("Please enter a phone number");
+          return;
+        }
+
         try {
-          const response = await fetch("/status");
+          const response = await fetch(`/status/${phoneNumber}`);
           if (!response.ok) {
             throw new Error("Network response was not ok");
           }
@@ -67,22 +75,24 @@
           if (data.connected) {
             qrCodeImg.style.display = "none"; // Sembunyikan QR Code jika terhubung
             statusDiv.innerText = `Connected as (${data.phone})`;
+            spinner.style.display = "none"; // Sembunyikan spinner
           } else {
             qrCodeImg.style.display = "block"; // Tampilkan QR Code jika tidak terhubung
             statusDiv.innerText = "Belum terhubung dengan Chat Bot Web Whisper";
-            updateQRCode();
+            spinner.style.display = "block"; // Tampilkan spinner saat menunggu QR Code
+            updateQRCode(phoneNumber);
           }
         } catch (error) {
           console.error("Failed to fetch status:", error);
         }
       }
 
-      async function updateQRCode() {
+      async function updateQRCode(phoneNumber) {
         const qrCodeImg = document.getElementById("qr-code");
         const spinner = document.getElementById("loading-spinner");
 
         try {
-          const response = await fetch("/qr-code");
+          const response = await fetch(`/qr-code/${phoneNumber}`);
           if (!response.ok) {
             throw new Error("Network response was not ok");
           }
@@ -103,9 +113,6 @@
           spinner.style.display = "none";
         }
       }
-
-      updateStatus();
-      setInterval(updateStatus, 5000);
     </script>
   </body>
 </html>
