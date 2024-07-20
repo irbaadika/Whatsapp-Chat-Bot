@@ -12,7 +12,7 @@ const fs = require("fs");
 const cors = require("cors");
 require("dotenv").config();
 
-const port = 3000;
+const port = 3001;
 
 let qrCodes = {};
 let connections = {};
