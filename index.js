@@ -9,6 +9,7 @@ const app = express();
 const path = require("path");
 const QRCode = require("qrcode");
 const fs = require("fs");
+const https = require("https");
 const cors = require("cors");
 require("dotenv").config();
 
@@ -623,6 +624,14 @@ async function startWhatsAppBot(phoneNumber) {
   }
 }
 
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+// Load SSL certificate
+const privateKey = fs.readFileSync("private-key.pem", "utf8");
+const certificate = fs.readFileSync("csr.pem", "utf8");
+const credentials = { key: privateKey, cert: certificate };
+
+// Create HTTPS server
+const httpsServer = https.createServer(credentials, app);
+
+httpsServer.listen(port, () => {
+  console.log(`HTTPS Server listening at https://localhost:${port}`);
 });
