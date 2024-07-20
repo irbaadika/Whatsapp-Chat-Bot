@@ -232,7 +232,7 @@ async function startWhatsAppBot(phoneNumber) {
               statusMessage = `> Sedang dikirim\n\nInformasi Pengirim\nPengirim: ${sender.name}\nNo HP: 0${sender.phone_number}`;
               break;
             case "Fullfilled":
-              const rateUrl = `https://38db-182-4-134-129.ngrok-free.app/rate/${transactionCode.toUpperCase()}`;
+              const rateUrl = `${baseUrl}/rate/${transactionCode.toUpperCase()}`;
               statusMessage = `> Sudah Diterima\n\nInformasi Penerima\nPenerima: ${customer.name}\nAlamat: ${customer.address}\npada ${updatedAt}\n\nTerimakasih telah memesan produk kami\nAnda bisa melakukan rating produk kami dengan klik tautan di bawah ini\n\n${rateUrl}`;
               break;
             default:
